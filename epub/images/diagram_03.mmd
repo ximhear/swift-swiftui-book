@@ -1,0 +1,7 @@
+graph TD
+    A[부모 Task] --> B[async let avatar]
+    A --> C[async let posts]
+    A --> D[자식 Task 모두 완료 대기]
+    B --> D
+    C --> D
+    D --> E[Profile 반환]

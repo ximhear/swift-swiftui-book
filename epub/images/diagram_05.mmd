@@ -1,0 +1,10 @@
+graph TB
+    subgraph "SwiftUI 엔진"
+        S[내부 상태 저장소<br/>isOn = true]
+    end
+    subgraph "View 트리 (매번 재생성)"
+        V1[ToggleView 인스턴스 1<br/>@State → 저장소 참조]
+        V2[ToggleView 인스턴스 2<br/>@State → 저장소 참조]
+    end
+    V1 -.-> S
+    V2 -.-> S

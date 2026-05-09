@@ -1,0 +1,8 @@
+graph LR
+    A[소스 코드] --> B[Swift 컴파일러]
+    B --> C[매크로 발견]
+    C --> D[SwiftSyntax로<br/>AST 파싱]
+    D --> E[매크로 플러그인<br/>별도 프로세스에서 실행]
+    E --> F[생성된 코드<br/>SwiftSyntax 반환]
+    F --> G[원본에 삽입]
+    G --> H[컴파일 계속]

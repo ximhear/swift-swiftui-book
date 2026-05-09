@@ -1,0 +1,7 @@
+graph TD
+    A[View 생성<br/>init 호출] --> B[body 첫 평가]
+    B --> C[onAppear]
+    C --> D["활성 상태<br/>(상태 변경 시 body 재평가)"]
+    D --> E[onDisappear]
+    E --> F[View 제거<br/>상태 소멸]
+    D -->|상태 변경| D

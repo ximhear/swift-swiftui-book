@@ -280,52 +280,67 @@ actor Counter {
 ```swift
 import Foundation
 
-/// 특정 DispatchQueue에서 실행되는 Custom Executor
+/// 특정 DispatchQueue에서 직렬로 실행되는 Custom SerialExecutor
 final class DispatchQueueExecutor: SerialExecutor {
-    let queue: DispatchQueue
-    
-    init(queue: DispatchQueue) {
-        self.queue = queue
+    private let queue: DispatchQueue
+
+    init(label: String) {
+        self.queue = DispatchQueue(label: label)
     }
-    
+
+    /// 런타임이 실행해달라고 넘기는 ExecutorJob을 큐로 디스패치
     func enqueue(_ job: consuming ExecutorJob) {
-        let unownedJob = UnownedExecutorJob(job)
+        // ExecutorJob은 move-only 타입이라 클로저에 직접 캡처할 수 없다.
+        // UnownedJob으로 변환해 캡처하고, 클로저 안에서 동기 실행시킨다.
+        let unownedJob = UnownedJob(job)
+        let unownedExecutor = asUnownedSerialExecutor()
         queue.async {
-            unownedJob.runSynchronously(
-                on: self.asUnownedSerialExecutor()
-            )
+            unownedJob.runSynchronously(on: unownedExecutor)
         }
+    }
+
+    /// 런타임이 이 executor를 가리키는 unowned 핸들을 만드는 표준 방식
+    func asUnownedSerialExecutor() -> UnownedSerialExecutor {
+        UnownedSerialExecutor(ordinary: self)
     }
 }
 
 /// Custom executor를 사용하는 Actor
 actor DatabaseActor {
-    // 데이터베이스 작업 전용 직렬 큐
-    private let executor = DispatchQueueExecutor(
-        queue: DispatchQueue(label: "com.app.database")
-    )
-    
-    // Actor의 executor를 커스텀으로 지정
+    private let _executor: DispatchQueueExecutor
+
+    init() {
+        self._executor = DispatchQueueExecutor(label: "com.app.database")
+    }
+
+    /// Actor의 실행 컨텍스트를 커스텀 executor로 지정
     nonisolated var unownedExecutor: UnownedSerialExecutor {
-        executor.asUnownedSerialExecutor()
+        _executor.asUnownedSerialExecutor()
     }
-    
-    private var connection: DatabaseConnection?
-    
-    func query(_ sql: String) async throws -> [Row] {
-        // 항상 "com.app.database" 큐에서 실행됨
-        guard let connection else {
-            throw DatabaseError.notConnected
-        }
-        return try connection.execute(sql)
+
+    private var rows: [String] = []
+
+    func insert(_ row: String) {
+        // 항상 "com.app.database" 큐(=동일 백그라운드 스레드)에서 실행됨
+        rows.append(row)
     }
-    
-    func connect(to url: URL) throws {
-        // 이 메서드도 동일한 큐에서 실행
-        connection = try DatabaseConnection(url: url)
-    }
+
+    func count() -> Int { rows.count }
+}
+
+// 사용
+let db = DatabaseActor()
+Task {
+    await db.insert("alice")
+    await db.insert("bob")
+    print(await db.count())  // 2
 }
 ```
+
+`enqueue(_:)`에서 두 가지 함정에 주의해야 합니다:
+
+1. **`consuming ExecutorJob`은 move-only 타입**이므로 클로저에 직접 캡처하면 컴파일 에러가 발생합니다. `UnownedJob(job)`으로 한 번 변환한 뒤 캡처해야 합니다.
+2. **`runSynchronously(on:)`은 UnownedSerialExecutor를 요구**합니다. `asUnownedSerialExecutor()`를 클로저 캡처 *전*에 호출하면 `self` 캡처 사이클을 피할 수 있습니다.
 
 Custom executor의 주요 사용 사례:
 - **레거시 코드 통합**: 특정 DispatchQueue에 바인딩된 기존 코드와 Actor를 연결할 때

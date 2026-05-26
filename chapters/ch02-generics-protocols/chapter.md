@@ -272,10 +272,14 @@ func firstPositive(
     numbers.first { $0 > 0 }
 }
 
-// Identifiable<ID>은 없음!
-// Identifiable의 ID는 Primary가 아님
-// (모든 Associated Type이 Primary일 필요는 없다)
+// Identifiable<ID> — Swift 5.7부터 ID도 Primary로 지정됨
+// (stdlib에서: public protocol Identifiable<ID>)
+func findOne(in items: some Collection<some Identifiable<UUID>>) {
+    // ...
+}
 ```
+
+> **Note**: Swift 5.7에서 표준 라이브러리의 많은 프로토콜이 Primary Associated Type을 갖도록 업데이트되었습니다. `Identifiable`, `Sequence`, `Collection`, `IteratorProtocol`, `AsyncSequence` 등 거의 모든 핵심 프로토콜이 해당됩니다. 다만 모든 Associated Type이 Primary일 필요는 없습니다 — 다음 절에서 선택 기준을 다룹니다.
 
 ### 직접 프로토콜 설계 시 Primary Associated Type 선택 기준
 

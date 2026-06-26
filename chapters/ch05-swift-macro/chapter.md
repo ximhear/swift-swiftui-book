@@ -1,6 +1,6 @@
 # Chapter 5. Swift Macro
 
-> Swift 5.9에서 도입된 매크로(Macro)는 컴파일 타임에 코드를 생성하는 메타프로그래밍 도구입니다. 보일러플레이트 코드를 줄이고, 커스텀 진단 메시지를 제공하며, 새로운 패턴을 언어 수준에서 지원할 수 있습니다. 이 장에서는 매크로의 동작 원리를 이해하고, 실무에서 유용한 매크로를 직접 작성하는 방법을 배웁니다.
+> Swift 5.9에서 도입된 매크로(Macro)는 컴파일 타임에 코드를 생성하는 메타프로그래밍(Metaprogramming) 도구입니다. 보일러플레이트 코드를 줄이고, 커스텀 진단 메시지를 제공하며, 새로운 패턴을 언어 수준에서 지원할 수 있습니다. 이 장에서는 매크로의 동작 원리를 이해하고, 실무에서 유용한 매크로를 직접 작성하는 방법을 배웁니다.
 
 ---
 
@@ -43,19 +43,18 @@ Swift 매크로는 크게 두 종류로 나뉩니다:
 
 **1. Freestanding Macro (독립 매크로)**
 
-`#` 접두사로 사용하며, 표현식이나 선언을 생성합니다.
+`#` 접두사로 사용하며, 역할(role)은 `expression`(표현식 생성)과 `declaration`(선언 생성) 두 가지입니다.
 
 ```swift
-// 표현식 매크로 (#으로 시작)
+// expression role — 표현식을 생성 (#으로 시작)
 let url = #URL("https://api.example.com/users")
 // 컴파일 타임에 URL 유효성 검증 + URL 인스턴스 생성
 
-// 진단 매크로
-#warning("이 기능은 아직 구현되지 않았습니다")
-
-// Swift 표준 라이브러리의 매크로들
+// Swift 표준 라이브러리의 expression 매크로
 let pred = #Predicate<User> { $0.age > 18 }
 ```
+
+> **Note**: `#warning("...")`, `#error("...")`는 매크로처럼 보이지만 매크로가 아니라 매크로 시스템(Swift 5.9) 이전부터 존재한 컴파일러 지시어(compiler directive, SE-0196)입니다. `#` 문법만 공유할 뿐 `macro` 선언이나 플러그인으로 구현된 것이 아닙니다.
 
 **2. Attached Macro (부착 매크로)**
 
@@ -93,6 +92,8 @@ public macro Observable() = #externalMacro(...)
 
 ### 매크로의 동작 흐름
 
+매크로는 소스 코드를 추상 구문 트리(AST, Abstract Syntax Tree)로 파싱한 뒤, 그 트리를 입력으로 받아 새 코드를 생성합니다.
+
 ```mermaid
 graph LR
     A[소스 코드] --> B[Swift 컴파일러]
@@ -104,7 +105,9 @@ graph LR
     G --> H[컴파일 계속]
 ```
 
-매크로는 **별도 프로세스(sandbox)**에서 실행됩니다. 파일 시스템이나 네트워크에 접근할 수 없으며, 오직 입력된 구문 트리만을 기반으로 코드를 생성합니다. 이 제한이 매크로의 안전성과 결정론적 동작을 보장합니다.
+매크로 플러그인은 **별도 프로세스**에서 실행되며, macOS에서는 기본적으로 샌드박스(sandbox)가 적용되어 파일 시스템·네트워크 접근이 차단됩니다. 따라서 매크로는 사실상 입력된 구문 트리만을 기반으로 코드를 생성하게 됩니다.
+
+> **Warning**: 이 샌드박스는 컴파일러가 강제하는 보안 조치이며 `-disable-sandbox` 옵션으로 끌 수 있습니다. 즉 언어가 결정론을 *보장*하는 것은 아니므로, 매크로 구현은 입력 구문 트리 외의 외부 상태에 의존하지 않도록 직접 설계해야 합니다.
 
 ---
 
@@ -114,8 +117,9 @@ graph LR
 
 매크로는 Swift Package로 구성합니다:
 
+**파일: Package.swift**
+
 ```swift
-// Package.swift
 // swift-tools-version: 5.9
 import PackageDescription
 import CompilerPluginSupport
@@ -169,9 +173,9 @@ let package = Package(
 
 **선언 (MyMacros 타겟):**
 
-```swift
-// Sources/MyMacros/Macros.swift
+**파일: Sources/MyMacros/Macros.swift**
 
+```swift
 /// 표현식을 실행하고, 원본 코드 문자열과 결과를 튜플로 반환
 @freestanding(expression)
 public macro stringify<T>(_ value: T) -> (T, String) =
@@ -181,8 +185,9 @@ public macro stringify<T>(_ value: T) -> (T, String) =
 
 **구현 (MyMacrosPlugin 타겟):**
 
+**파일: Sources/MyMacrosPlugin/StringifyMacro.swift**
+
 ```swift
-// Sources/MyMacrosPlugin/StringifyMacro.swift
 import SwiftSyntax
 import SwiftSyntaxMacros
 
@@ -212,14 +217,29 @@ print("\(code) = \(result)")  // "2 + 3 = 5"
 
 🟡 중급
 
+**선언 (MyMacros 타겟):**
+
+**파일: Sources/MyMacros/Macros.swift**
+
 ```swift
-// 선언
+import Foundation
+
 @freestanding(expression)
 public macro URL(_ string: String) -> URL =
     #externalMacro(module: "MyMacrosPlugin",
                    type: "URLMacro")
+```
 
-// 구현
+**구현 (MyMacrosPlugin 타겟):**
+
+**파일: Sources/MyMacrosPlugin/URLMacro.swift**
+
+```swift
+import Foundation
+import SwiftSyntax
+import SwiftSyntaxMacros
+import SwiftDiagnostics
+
 public struct URLMacro: ExpressionMacro {
     public static func expansion(
         of node: some FreestandingMacroExpansionSyntax,
@@ -236,7 +256,10 @@ public struct URLMacro: ExpressionMacro {
         guard URL(string: value) != nil else {
             context.diagnose(Diagnostic(
                 node: argument,
-                message: URLDiagnostic.invalidURL(value)
+                message: SimpleDiagnostic(
+                    message: "유효하지 않은 URL: \(value)",
+                    severity: .error
+                )
             ))
             return "URL(string: \(argument))!"
         }
@@ -253,6 +276,15 @@ enum MacroError: Error, CustomStringConvertible {
         case .requiresStringLiteral:
             return "#URL은 문자열 리터럴이 필요합니다"
         }
+    }
+}
+
+// 진단 메시지를 표현하는 최소 구현
+struct SimpleDiagnostic: DiagnosticMessage {
+    let message: String
+    let severity: DiagnosticSeverity
+    var diagnosticID: MessageID {
+        MessageID(domain: "MyMacros", id: message)
     }
 }
 ```
@@ -368,10 +400,13 @@ SyntaxProtocol
 ├── ExprSyntaxProtocol (표현식)
 │   ├── FunctionCallExprSyntax
 │   ├── StringLiteralExprSyntax
-│   └── MemberAccessExprSyntax
+│   ├── MemberAccessExprSyntax
+│   └── IfExprSyntax        // if/switch는 SE-0380으로 표현식이 됨
 ├── StmtSyntaxProtocol (구문)
-│   ├── IfExprSyntax
-│   └── ForStmtSyntax
+│   ├── ForStmtSyntax
+│   ├── WhileStmtSyntax
+│   ├── GuardStmtSyntax
+│   └── ReturnStmtSyntax
 └── TypeSyntaxProtocol (타입)
     ├── IdentifierTypeSyntax
     └── OptionalTypeSyntax
@@ -394,6 +429,8 @@ func storedProperties(
               variable.bindingSpecifier.text == "var"
                 || variable.bindingSpecifier.text == "let",
               let binding = variable.bindings.first,
+              // 계산 프로퍼티(접근자 블록 보유)는 저장 프로퍼티가 아니므로 제외
+              binding.accessorBlock == nil,
               let pattern = binding.pattern
                   .as(IdentifierPatternSyntax.self),
               let type = binding.typeAnnotation?.type
@@ -410,7 +447,11 @@ func storedProperties(
 
 ### 매크로 테스트
 
-매크로는 반드시 테스트해야 합니다. SwiftSyntax는 테스트를 위한 전용 프레임워크를 제공합니다:
+🟡 중급
+
+> **Note**: 매크로는 컴파일 타임에 코드를 생성하므로 일반적인 단위 테스트로는 동작을 확인하기 어렵습니다. SwiftSyntax는 확장 결과와 진단 메시지를 문자열 단위로 검증하는 전용 도구(`assertMacroExpansion`)를 제공하므로, 매크로 구현은 이 도구로 반드시 테스트하는 것을 권장합니다.
+
+SwiftSyntax는 테스트를 위한 전용 프레임워크를 제공합니다:
 
 ```swift
 import SwiftSyntaxMacrosTestSupport
@@ -460,6 +501,8 @@ final class URLMacroTests: XCTestCase {
 
 ### 패턴 1: @AutoInit — 자동 이니셜라이저 생성
 
+🟡 중급
+
 ```swift
 @attached(member, names: named(init))
 public macro AutoInit() = #externalMacro(
@@ -484,10 +527,16 @@ class UserViewModel {
 }
 ```
 
-### 패턴 2: @EnvironmentKey — SwiftUI Environment 키 보일러플레이트 제거
+### 패턴 2: @Entry — SwiftUI Environment 키 보일러플레이트 제거
+
+🟡 중급
+
+커스텀 Environment 값을 추가하려면 전통적으로 키 타입과 `EnvironmentValues` 확장을 모두 작성해야 했습니다. Xcode 16/iOS 18에서 도입된 공식 매크로 `@Entry`는 이 보일러플레이트를 한 줄로 줄여줍니다.
 
 ```swift
-// Before: 수동으로 3개의 선언 필요
+import SwiftUI
+
+// Before: 수동으로 키 타입 + EnvironmentValues 확장이 필요
 private struct ThemeKey: EnvironmentKey {
     static let defaultValue: Theme = .light
 }
@@ -498,11 +547,18 @@ extension EnvironmentValues {
         set { self[ThemeKey.self] = newValue }
     }
 }
-
-// After: 매크로 한 줄
-@EnvironmentValue(defaultValue: Theme.light)
-var theme: Theme
 ```
+
+```swift
+import SwiftUI
+
+// After: EnvironmentValues 확장 내 프로퍼티에 @Entry 한 줄
+extension EnvironmentValues {
+    @Entry var theme: Theme = .light
+}
+```
+
+> **Note**: `@Entry`는 `accessor` + `peer` 역할의 attached 매크로입니다. 매크로 역할 규칙상 `extension`/`peer`/`member` 역할은 *다른 타입*에 대한 확장 선언을 만들어낼 수 없으므로, 반드시 `extension EnvironmentValues { ... }` 내부 프로퍼티에 부착해야 키 타입과 접근자가 생성됩니다. (직접 만든 매크로로 동일 동작을 구현할 때도 같은 제약이 적용됩니다.)
 
 ### 패턴 3: @Builder — 빌더 패턴 자동 생성
 
@@ -557,16 +613,18 @@ let request = NetworkRequest
 
 ### 디버깅
 
-매크로가 생성한 코드는 Xcode에서 확인할 수 있습니다:
-1. 매크로 적용 부분에서 우클릭
-2. "Expand Macro" 선택
-3. 생성된 코드를 직접 확인
+매크로가 생성한 코드는 Xcode에서 확인할 수 있습니다.
+1. 매크로 적용 부분에서 우클릭합니다.
+2. "Expand Macro"를 선택합니다.
+3. 생성된 코드를 직접 확인합니다.
 
 ### 성능 고려
 
 - 매크로는 **컴파일 타임에만** 실행되므로 런타임 성능에 영향을 주지 않습니다.
 - 하지만 복잡한 매크로는 **컴파일 시간을 증가**시킬 수 있습니다.
-- 대규모 프로젝트에서는 매크로를 별도 패키지로 분리하여 캐싱 효과를 얻으세요.
+- 대규모 프로젝트에서는 매크로를 별도 패키지로 분리하여 캐싱 효과를 얻을 수 있습니다.
+
+> **Warning**: 매크로 플러그인은 빌드 시 SwiftSyntax를 함께 컴파일해야 하므로, 매크로를 처음 도입하면 클린 빌드 시간이 눈에 띄게 늘 수 있습니다. 매크로 구현을 별도 패키지로 분리해 증분 빌드 캐시를 활용하고, 확장 로직이 무거워지지 않도록 구현을 단순하게 유지하세요.
 
 ### 매크로 vs 다른 대안
 
@@ -589,6 +647,6 @@ let request = NetworkRequest
 
 - **매크로 테스트**: `assertMacroExpansion`으로 입력과 예상 출력, 진단 메시지를 검증합니다.
 
-- **실전 패턴**: `@AutoInit`, `@EnvironmentKey`, `@Builder` 등 보일러플레이트를 크게 줄이는 매크로를 직접 작성할 수 있습니다.
+- **실전 패턴**: `@AutoInit`, `@Builder` 같은 매크로를 직접 작성하거나 공식 `@Entry` 매크로를 활용해 보일러플레이트를 크게 줄일 수 있습니다.
 
 Part 1이 끝났습니다. 다음 Part 2에서는 **SwiftUI 아키텍처**를 다루며, SwiftUI 렌더링 엔진의 내부 동작부터 시작합니다.

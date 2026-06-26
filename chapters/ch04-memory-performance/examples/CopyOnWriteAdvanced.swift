@@ -60,6 +60,7 @@ struct ImageDocument: Equatable {
 
     var width: Int { storage.width }
     var height: Int { storage.height }
+    var layerCount: Int { storage.layers.count }
 
     func pixel(at x: Int, y: Int)
         -> (r: UInt8, g: UInt8, b: UInt8, a: UInt8) {
@@ -128,7 +129,7 @@ struct ImageDocument: Equatable {
 // MARK: - COW 동작 검증
 
 func verifyCOWBehavior() {
-    var doc1 = ImageDocument(width: 100, height: 100)
+    let doc1 = ImageDocument(width: 100, height: 100)
     var doc2 = doc1  // 복사 없음 (공유)
 
     doc2.setPixel(at: 0, y: 0, r: 255, g: 0, b: 0)

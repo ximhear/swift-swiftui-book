@@ -1,7 +1,6 @@
 // Ch05 - Attached Macro 선언과 사용 예시
 
 import Foundation
-import SwiftUI
 
 // MARK: - @UserDefault 매크로
 
@@ -32,10 +31,12 @@ public macro AutoInit() = #externalMacro(
 )
 
 // 사용
+protocol UserRepository {}
+
 @AutoInit
 class UserViewModel {
     let userId: String
-    let repository: String
+    let repository: UserRepository
     var isLoading: Bool = false
 }
 

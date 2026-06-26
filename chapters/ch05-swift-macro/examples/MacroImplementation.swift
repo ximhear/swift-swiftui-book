@@ -1,8 +1,10 @@
 // Ch05 - 매크로 구현 예시 (MyMacrosPlugin 타겟)
 // 이 파일은 매크로 플러그인 내에서 사용됩니다.
 
+import Foundation
 import SwiftSyntax
 import SwiftSyntaxMacros
+import SwiftDiagnostics
 import SwiftCompilerPlugin
 
 // MARK: - StringifyMacro 구현

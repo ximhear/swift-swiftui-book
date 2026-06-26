@@ -17,3 +17,6 @@ epub/build/
 
 # Scratch
 temp/
+
+# 하네스 중간 검증 산출물
+_workspace/

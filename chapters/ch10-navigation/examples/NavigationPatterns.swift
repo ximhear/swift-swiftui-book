@@ -22,6 +22,7 @@ enum AppRoute: Hashable {
     case productDetail(Product)
     case cart
     case checkout
+    case orderConfirmation(orderId: String)
 }
 
 // MARK: - 프로그래밍 방식 내비게이션
@@ -53,6 +54,8 @@ struct TypeSafeNavigationDemo: View {
                     Text("장바구니")
                 case .checkout:
                     Text("결제")
+                case .orderConfirmation(let orderId):
+                    Text("주문 완료: \(orderId)")
                 }
             }
         }
@@ -65,53 +68,95 @@ enum DeepLink {
     case product(id: String)
     case category(id: String)
     case cart
+    case settings
 
     init?(url: URL) {
-        let parts = url.pathComponents.filter { $0 != "/" }
-        guard let first = parts.first else { return nil }
+        // 커스텀 스킴은 host가 첫 경로 토큰이고,
+        // Universal Link는 host가 도메인이므로 path만 사용한다.
+        // - myapp://product/12345  → host="product", path="/12345"
+        // - https://myapp.com/product/12345 → path="/product/12345"
+        let pathTokens = url.pathComponents.filter { $0 != "/" }
+        let segments: [String]
+        if url.scheme == "https" || url.scheme == "http" {
+            segments = pathTokens
+        } else {
+            segments = (url.host().map { [$0] } ?? []) + pathTokens
+        }
+
+        guard let first = segments.first else { return nil }
         switch first {
         case "product":
-            guard let id = parts.dropFirst().first
+            guard let id = segments.dropFirst().first
             else { return nil }
             self = .product(id: id)
         case "category":
-            guard let id = parts.dropFirst().first
+            guard let id = segments.dropFirst().first
             else { return nil }
             self = .category(id: id)
         case "cart":
             self = .cart
+        case "settings":
+            self = .settings
         default:
             return nil
         }
     }
 }
 
-// MARK: - 탭 + 내비게이션
+// MARK: - 탭 + 내비게이션 (재탭 시 루트로 이동)
 
-enum TabItem: Hashable {
+enum AppTab: Hashable {
     case home, search, profile
 }
 
 struct MainTabView: View {
-    @State private var selectedTab: TabItem = .home
+    @State private var selectedTab: AppTab = .home
     @State private var homePath = NavigationPath()
+    @State private var searchPath = NavigationPath()
+    @State private var profilePath = NavigationPath()
 
     var body: some View {
-        TabView(selection: $selectedTab) {
+        // 커스텀 Binding으로 재탭(같은 탭 다시 누르기)을 가로챈다.
+        let selection = Binding<AppTab>(
+            get: { selectedTab },
+            set: { newTab in
+                if newTab == selectedTab {
+                    popToRoot(newTab)   // 같은 탭 재탭 → 루트로
+                }
+                selectedTab = newTab
+            }
+        )
+
+        return TabView(selection: selection) {
             Tab("홈", systemImage: "house",
-                value: TabItem.home) {
+                value: AppTab.home) {
                 NavigationStack(path: $homePath) {
                     Text("홈 화면")
                         .navigationTitle("홈")
                 }
             }
             Tab("검색", systemImage: "magnifyingglass",
-                value: TabItem.search) {
-                NavigationStack {
+                value: AppTab.search) {
+                NavigationStack(path: $searchPath) {
                     Text("검색")
                         .navigationTitle("검색")
                 }
             }
+            Tab("프로필", systemImage: "person",
+                value: AppTab.profile) {
+                NavigationStack(path: $profilePath) {
+                    Text("프로필")
+                        .navigationTitle("프로필")
+                }
+            }
+        }
+    }
+
+    private func popToRoot(_ tab: AppTab) {
+        switch tab {
+        case .home: homePath.removeLast(homePath.count)
+        case .search: searchPath.removeLast(searchPath.count)
+        case .profile: profilePath.removeLast(profilePath.count)
         }
     }
 }

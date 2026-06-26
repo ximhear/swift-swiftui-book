@@ -50,7 +50,7 @@ struct SimpleView: View {
 | View + @State | 간단, 보일러플레이트 없음 | 테스트 어려움 | 단순한 화면 |
 | @Observable ViewModel | 익숙함, 로직 분리 | 과도한 추상화 위험 | 중간 복잡도 |
 | 단방향 흐름 (Redux-like) | 예측 가능, 디버깅 용이 | 보일러플레이트 | 복잡한 상태 전이 |
-| TCA | 조합 가능, 테스트 우수 | 학습 곡선 높음 | 대규모 앱 |
+| TCA | 합성 가능, 테스트 우수 | 학습 곡선 높음 | 대규모 앱 |
 
 ---
 
@@ -69,8 +69,11 @@ struct Article: Identifiable, Sendable {
 }
 
 // ViewModel: 비즈니스 로직 담당
+// @MainActor를 부여해 async 메서드 재개 이후의 상태 변경이
+// 메인 액터에서 일어나도록 보장한다.
+@MainActor
 @Observable
-class ArticleListViewModel {
+final class ArticleListViewModel {
     private(set) var articles: [Article] = []
     private(set) var isLoading = false
     private(set) var error: Error?
@@ -145,6 +148,8 @@ struct ArticleListView: View {
 }
 ```
 
+> **Note**: `@Observable` ViewModel에는 `@MainActor`를 붙이는 것을 표준으로 삼으세요. SE-0338 이후 `nonisolated`한 async 메서드는 호출자의 액터를 상속하지 않고 전역 실행기에서 재개됩니다. 따라서 `@MainActor`가 없으면 `await repository.fetchAll()` 재개 이후의 `articles = ...` 같은 상태 변경이 메인 액터 밖에서 일어납니다. SwiftUI는 이 상태를 메인에서 관찰하므로 데이터 경합 위험이 생기는데, 컴파일러가 막아 주지 않아 더 위험합니다.
+
 ---
 
 ## 11.3 The Composable Architecture(TCA) 소개
@@ -175,6 +180,10 @@ struct CounterFeature {
         case toggleTimerButtonTapped
     }
     
+    // 시간 의존성을 주입받는다. 테스트에서는 TestClock으로 교체해
+    // 실제 시간을 기다리지 않고 제어할 수 있다.
+    @Dependency(\.continuousClock) var clock
+    
     // 3. Reducer: Action을 받아 State를 변경하고
     //    필요시 Effect를 반환
     var body: some ReducerOf<Self> {
@@ -191,10 +200,11 @@ struct CounterFeature {
             case .toggleTimerButtonTapped:
                 state.isTimerRunning.toggle()
                 if state.isTimerRunning {
+                    // Task.sleep이 아니라 주입된 clock의 timer를
+                    // 사용해야 TestClock으로 시간을 제어할 수 있다.
                     return .run { send in
-                        while true {
-                            try await Task.sleep(
-                                for: .seconds(1))
+                        for await _ in self.clock.timer(
+                            interval: .seconds(1)) {
                             await send(.timerTick)
                         }
                     }
@@ -240,6 +250,8 @@ struct CounterView: View {
 }
 ```
 
+타이머 Effect가 `Task.sleep` 대신 `@Dependency(\.continuousClock)`로 주입받은 `clock`을 사용하는 점에 주목하세요. `Task.sleep`은 시스템 연속 클럭을 직접 사용하므로 테스트에서 시간을 제어할 수 없지만, 주입된 `clock`을 통하면 11.6에서 보듯 `TestClock`으로 교체해 시간을 즉시 앞당길 수 있습니다.
+
 ### TCA의 장점
 
 - **테스트**: `TestStore`로 상태 변화와 부수 효과를 검증
@@ -267,6 +279,8 @@ MyApp/
 ```
 
 ### 프로토콜 기반 의존성 역전
+
+여기서 `Article`은 `Core`(예: `SharedModels`) 모듈의 `public` 타입이라고 가정합니다. `public` API에 노출되는 도메인 모델은 모듈 경계를 넘기 위해 `public`이어야 합니다.
 
 ```swift
 // Core 모듈: 인터페이스 정의
@@ -406,6 +420,7 @@ struct TodoListFeature {
         var items: IdentifiedArrayOf<TodoItemFeature.State> = []
         var newItemTitle: String = ""
         var filter: Filter = .all
+        var isLoading = false
         
         var filteredItems: IdentifiedArrayOf<
             TodoItemFeature.State
@@ -427,18 +442,23 @@ struct TodoListFeature {
         }
     }
     
-    enum Action: Equatable {
+    enum Action {
         // 부모 자체 액션
         case addButtonTapped
         case newItemTitleChanged(String)
-        case deleteItems(IndexSet)
+        case deleteItems(ids: [TodoItemFeature.State.ID])
         case filterChanged(State.Filter)
         case clearCompletedTapped
+        // 비동기 로딩 (11.6에서 테스트)
+        case loadButtonTapped
+        case loadResponse(Result<[TodoItemFeature.State], Error>)
         // 자식 액션 위임
         case items(IdentifiedActionOf<TodoItemFeature>)
     }
     
     @Dependency(\.uuid) var uuid
+    // todoClient의 정의는 11.6에서 다룹니다.
+    @Dependency(\.todoClient) var todoClient
     
     var body: some ReducerOf<Self> {
         Reduce { state, action in
@@ -458,8 +478,13 @@ struct TodoListFeature {
                 state.newItemTitle = title
                 return .none
                 
-            case let .deleteItems(indexSet):
-                state.items.remove(atOffsets: indexSet)
+            case let .deleteItems(ids):
+                // 오프셋이 아니라 ID로 삭제한다. 필터가 적용되면
+                // 화면의 인덱스와 전체 items의 인덱스가 어긋나므로
+                // ID 기반 삭제가 안전하다.
+                for id in ids {
+                    state.items.remove(id: id)
+                }
                 return .none
                 
             case let .filterChanged(filter):
@@ -468,6 +493,32 @@ struct TodoListFeature {
                 
             case .clearCompletedTapped:
                 state.items.removeAll { $0.isCompleted }
+                return .none
+                
+            case .loadButtonTapped:
+                state.isLoading = true
+                return .run { send in
+                    // Result(catching:)는 동기 클로저만 받으므로
+                    // 비동기 호출은 do/catch로 직접 감싼다.
+                    do {
+                        let items = try await todoClient
+                            .fetchAll()
+                        await send(.loadResponse(
+                            .success(items)))
+                    } catch {
+                        await send(.loadResponse(
+                            .failure(error)))
+                    }
+                }
+                
+            case let .loadResponse(.success(items)):
+                state.isLoading = false
+                state.items = IdentifiedArray(
+                    uniqueElements: items)
+                return .none
+                
+            case .loadResponse(.failure):
+                state.isLoading = false
                 return .none
                 
             case .items:
@@ -487,6 +538,10 @@ struct TodoListFeature {
 1. `items` 배열의 각 요소를 `TodoItemFeature` 리듀서에 연결합니다.
 2. 자식 액션이 올라오면 해당 ID의 항목에만 리듀서를 실행합니다.
 3. 부모 리듀서에서 `.items` 케이스로 자식 액션을 관찰할 수 있습니다.
+
+이 Feature에는 11.6의 테스트에서 사용할 비동기 로딩 기능도 포함했습니다. `loadButtonTapped`/`loadResponse` 액션과 `isLoading` 상태, 그리고 `todoClient` 의존성으로 서버에서 할 일을 불러옵니다(`todoClient`의 정의는 11.6에서 다룹니다).
+
+> **Note**: `Action`에서 `Equatable` 준수를 뺀 점에 주목하세요. `loadResponse(Result<[TodoItemFeature.State], Error>)`의 `Error`는 `Equatable`이 아니므로 `Action` 전체를 `Equatable`로 만들 수 없습니다. TCA 1.x의 `TestStore`는 `Action`의 `Equatable`이 아니라 케이스 키패스(`receive(\.loadResponse.success)`)로 동작하므로, `Action`에 `Equatable`은 필요하지 않습니다.
 
 ### 부모 View — TodoListView
 
@@ -529,7 +584,13 @@ struct TodoListView: View {
                         TodoItemView(store: itemStore)
                     }
                     .onDelete { indexSet in
-                        store.send(.deleteItems(indexSet))
+                        // 화면에 보이는 filteredItems의 오프셋을
+                        // ID로 변환해 보낸다. 필터가 걸린 상태에서도
+                        // 정확한 항목이 삭제된다.
+                        let ids = indexSet.map {
+                            store.filteredItems[$0].id
+                        }
+                        store.send(.deleteItems(ids: ids))
                     }
                 }
                 
@@ -571,6 +632,8 @@ struct TodoListView: View {
 ```
 
 `store.scope(state:action:)`는 부모 Store에서 자식 Store를 파생(derive)합니다. View 계층과 Feature 계층이 1:1로 대응하므로 각 View는 자신이 필요한 상태만 바라보게 됩니다.
+
+> **Note**: 여기서는 저장 프로퍼티 `items`가 아니라 **계산 프로퍼티** `filteredItems`에 스코프를 걸었습니다. 이는 표준형(`\.items`에 스코프)이 아닌 파생 컬렉션 스코프로, 액션이 요소 ID로 라우팅되므로 표시는 정상 동작합니다. 다만 삭제 같은 위치 기반 조작은 반드시 ID로 변환해야 안전합니다(위 `onDelete` 참고). 필터링이 복잡하지 않다면 `\.items`에 스코프한 뒤 View 단계에서 거르는 표준형이 더 단순합니다.
 
 ### 합성의 이점
 
@@ -663,7 +726,9 @@ struct TodoItemFeatureTests {
 }
 ```
 
-`TestStore`는 **exhaustive(완전 검증)** 모드가 기본입니다. 상태의 **모든 변경**을 빠짐없이 기술해야 합니다. 만약 `$0.isCompleted = true`를 빠뜨리면 테스트가 실패하며, 어떤 필드가 예상과 다른지 diff를 출력합니다. 이 엄격함 덕분에 의도치 않은 상태 변경을 조기에 발견할 수 있습니다.
+`TestStore`는 **exhaustive(완전 검증)** 모드가 기본입니다. 상태의 **모든 변경**을 빠짐없이 기술해야 합니다.
+
+> **Note**: `$0.isCompleted = true`를 빠뜨리면 테스트가 실패하며, 어떤 필드가 예상과 다른지 diff를 출력합니다. 이 엄격함 덕분에 의도치 않은 상태 변경을 조기에 발견할 수 있습니다.
 
 ### Exhaustivity 모드
 
@@ -696,7 +761,7 @@ func filterChangeNonExhaustive() async {
 }
 ```
 
-`.off` 모드는 탐색적 테스트(exploratory test)나 통합 테스트에서 유용하지만, 단위 테스트에서는 가능한 한 기본(exhaustive) 모드를 사용하는 것을 권장합니다.
+> **Tip**: `.off` 모드는 탐색적 테스트(exploratory test)나 통합 테스트에서 유용하지만, 단위 테스트에서는 가능한 한 기본(exhaustive) 모드를 사용하는 것을 권장합니다. 모든 상태 변경을 명시해야 회귀를 조기에 잡을 수 있기 때문입니다.
 
 ### Effect 테스트와 receive
 
@@ -737,11 +802,13 @@ struct CounterFeatureTests {
 }
 ```
 
-`TestClock`을 주입하면 실제로 1초를 기다리지 않고 시간을 즉시 앞당길 수 있습니다. `receive(\.timerTick)`은 Effect가 `.timerTick` 액션을 보낼 때까지 대기한 뒤, 해당 액션에 의한 상태 변화를 검증합니다.
+`receive(\.timerTick)`은 Effect가 `.timerTick` 액션을 보낼 때까지 대기한 뒤, 해당 액션에 의한 상태 변화를 검증합니다.
+
+> **Note**: `TestClock`을 주입하면 실제로 1초를 기다리지 않고 시간을 즉시 앞당길 수 있습니다. 단, 이는 11.3의 리듀서가 `Task.sleep`이 아니라 주입된 `@Dependency(\.continuousClock)`(`clock.timer`)을 사용할 때만 동작합니다. `Task.sleep`은 시스템 클럭을 직접 쓰므로 `TestClock.advance(by:)`로 제어되지 않아 테스트가 실제 시간에 의존하게 됩니다.
 
 ### Mock Dependency 주입
 
-TCA는 `@Dependency` 매크로를 통해 의존성을 주입합니다. 테스트에서는 `withDependencies` 클로저로 실제 구현 대신 Mock을 넣을 수 있습니다.
+TCA는 `@Dependency` 매크로를 통해 의존성을 주입합니다. 테스트에서는 `withDependencies` 클로저로 실제 구현 대신 Mock을 넣을 수 있습니다. 아래에서는 11.5의 `TodoListFeature`가 사용한 `todoClient` 의존성을 정의하고, 그 Mock을 주입해 로딩 로직(`loadButtonTapped` → `loadResponse`)을 테스트합니다.
 
 ```swift
 // 의존성 정의
@@ -808,7 +875,8 @@ func loadItems() async {
 
 - **네트워크 없이 테스트**: 실제 서버에 의존하지 않으므로 빠르고 안정적입니다.
 - **에러 시나리오 재현**: Mock에서 에러를 던지게 설정하면 에러 처리 로직을 검증할 수 있습니다.
-- **`testValue` 안전망**: 주입을 빠뜨리면 `fatalError`가 발생하므로 누락을 즉시 발견합니다.
+
+> **Warning**: 위 `testValue`는 호출 즉시 `fatalError`를 내도록 정의했습니다. 테스트에서 `withDependencies`로 의존성 주입을 빠뜨리면 곧바로 크래시가 나므로 누락을 즉시 발견할 수 있습니다. 거꾸로 말하면, 실제로 사용하는 의존성은 테스트마다 반드시 주입해야 합니다.
 
 ---
 
@@ -816,7 +884,7 @@ func loadItems() async {
 
 🟡 중급
 
-11.4에서 모듈화의 개념과 디렉터리 구조를 살펴보았습니다. 이 절에서는 실제 `Package.swift`를 작성하고, 모듈 간 의존성 설계 원칙과 빌드 시간 최적화 팁을 다룹니다.
+11.4에서 모듈화의 개념과 디렉토리 구조를 살펴보았습니다. 이 절에서는 실제 `Package.swift`를 작성하고, 모듈 간 의존성 설계 원칙과 빌드 시간 최적화 팁을 다룹니다.
 
 ### Package.swift 작성 예시
 
@@ -918,7 +986,9 @@ graph TD
 
 **원칙 2: 순환 의존 금지**
 
-모듈 A가 모듈 B에 의존하고, 모듈 B가 다시 모듈 A에 의존하면 Swift Package Manager는 빌드를 거부합니다. 순환이 발생하는 대표적 원인과 해법은 다음과 같습니다:
+> **Warning**: 모듈 A가 모듈 B에 의존하고, 모듈 B가 다시 모듈 A에 의존하면 Swift Package Manager는 빌드를 거부합니다. 순환 의존은 모듈화가 깨지는 가장 흔한 함정입니다.
+
+순환이 발생하는 대표적 원인과 해법은 다음과 같습니다:
 
 | 원인 | 해법 |
 |------|------|
@@ -944,7 +1014,7 @@ var profileViewFactory
 
 **원칙 3: 인터페이스와 구현 분리**
 
-Core 모듈에는 프로토콜(인터페이스)만 두고, 실제 구현은 별도 모듈이나 앱 타겟에 배치합니다. 이렇게 하면 Feature 모듈은 구현체가 아닌 인터페이스에만 의존하므로, 구현이 바뀌어도 Feature를 다시 빌드할 필요가 없습니다.
+Core 모듈에는 프로토콜(인터페이스)만 두고, 실제 구현은 별도 모듈이나 앱 타겟에 배치합니다. 이렇게 하면 Feature 모듈은 구현체가 아닌 인터페이스에만 의존하므로, 구현이 바뀌어도 Feature를 다시 빌드할 필요가 없습니다. 아래 코드에서 `Todo`는 `SharedModels`(Core) 모듈의 `public` 타입이라고 가정합니다 — 모듈 경계를 넘는 도메인 모델은 `public`이어야 합니다.
 
 ```swift
 // AppCore 모듈 (인터페이스)
@@ -997,7 +1067,7 @@ extension APIClient {
 
 **3. `@testable import` 대신 `public` 인터페이스를 테스트합니다**
 
-`@testable import`는 모듈의 내부 심볼까지 노출하므로 내부 변경에 테스트가 깨지기 쉽습니다. 공개 인터페이스만 테스트하면 모듈 내부를 자유롭게 리팩터링할 수 있습니다.
+> **Tip**: `@testable import`는 모듈의 내부 심볼까지 노출하므로 내부 변경에 테스트가 깨지기 쉽습니다. 공개 인터페이스만 테스트하면 모듈 내부를 자유롭게 리팩터링할 수 있습니다.
 
 **4. Xcode Build Timeline으로 병목을 확인합니다**
 

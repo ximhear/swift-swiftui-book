@@ -21,8 +21,10 @@ protocol ArticleRepository: Sendable {
 
 // MARK: - ViewModel
 
+// async 재개 이후의 상태 변경이 메인 액터에서 일어나도록 @MainActor를 부여한다.
+@MainActor
 @Observable
-class ArticleListViewModel {
+final class ArticleListViewModel {
     private(set) var articles: [Article] = []
     private(set) var isLoading = false
     private(set) var error: Error?

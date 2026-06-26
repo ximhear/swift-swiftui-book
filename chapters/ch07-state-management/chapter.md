@@ -6,7 +6,7 @@
 
 ## 7.1 @State, @Binding, @Environment 깊이 파기
 
-### @State — View가 소유하는 진실의 원천
+### @State — View가 소유하는 진실의 원천(Source of Truth)
 
 `@State`는 **해당 View가 소유하고 관리하는 상태**입니다. SwiftUI 엔진이 내부 저장소에서 관리하며, View 구조체가 재생성되어도 값이 유지됩니다.
 
@@ -56,6 +56,8 @@ struct FormView: View {
 - `private`으로 선언 — 외부에서 직접 접근할 필요 없음
 - View 로컬 상태에만 사용 — UI 상태, 폼 입력, 토글 등
 - 초기값은 View가 **처음 나타날 때만** 적용됨
+
+> **Warning**: `@State`의 초기값은 View가 처음 나타날 때 단 한 번만 적용됩니다. 부모로부터 전달받은 값으로 `@State`를 초기화하면, 부모의 값이 바뀌어도 자식의 `@State`는 갱신되지 않습니다. 외부 값을 따라가야 한다면 `@State` 초기화 대신 `@Binding`이나 일반 프로퍼티로 받아야 합니다.
 
 ### @State와 참조 타입 (iOS 17+)
 
@@ -247,6 +249,16 @@ struct ContentView: View {
 }
 ```
 
+> **Tip**: Xcode 16(iOS 18 SDK)부터는 `@Entry` 매크로로 위 1~2단계(`EnvironmentKey` 정의 + `EnvironmentValues` 확장)를 한 줄로 줄일 수 있습니다.
+>
+> ```swift
+> extension EnvironmentValues {
+>     @Entry var appTheme: AppTheme = .standard
+> }
+> ```
+>
+> 디플로이먼트 타깃이 그보다 낮다면 위의 `EnvironmentKey` 방식을 그대로 사용해야 합니다.
+
 ---
 
 ## 7.2 @Observable vs @ObservableObject — 마이그레이션 전략
@@ -370,7 +382,9 @@ struct CartView: View {
 
 ### @Bindable — @Observable 시대의 바인딩
 
-`@Observable` 객체의 프로퍼티에 `$` 바인딩을 생성하려면 `@Bindable`이 필요합니다. 이것은 마이그레이션에서 가장 놓치기 쉬운 부분입니다.
+`@Observable` 객체의 프로퍼티에 `$` 바인딩을 생성하려면 `@Bindable`이 필요합니다.
+
+> **Warning**: `@Bindable` 누락은 `@ObservableObject`에서 `@Observable`로 마이그레이션할 때 가장 놓치기 쉬운 부분입니다. 일반 프로퍼티나 `@Environment`로 받은 `@Observable` 객체에는 `$` 프로젝션이 없으므로, `$editor.name` 같은 바인딩을 쓰려면 반드시 `@Bindable`로 감싸야 합니다.
 
 ```swift
 @Observable
@@ -399,7 +413,8 @@ struct ProfileView: View {
     @State private var editor = ProfileEditor()
     
     var body: some View {
-        // $editor.name이 바로 사용 가능
+        // @State가 객체를 소유하므로 자식에 그대로 전달.
+        // 여기서 직접 바인딩이 필요하면 $editor.name도 사용 가능
         ProfileEditView(editor: editor)
     }
 }
@@ -429,6 +444,7 @@ struct SettingsView: View {
 
 ```swift
 @Observable
+@MainActor   // UndoManager() 기본값이 MainActor 격리이므로 함께 격리
 class DocumentEditor {
     var title = ""        // 변경 시 View 업데이트
     var content = ""      // 변경 시 View 업데이트
@@ -444,10 +460,14 @@ class DocumentEditor {
 }
 ```
 
+> **Note**: `UndoManager()`의 기본값은 `@MainActor`에 격리되어 있습니다. Swift 6 언어 모드의 완전 동시성 검사에서는 nonisolated 컨텍스트에서 이 기본값을 쓰면 컴파일 에러가 납니다. `@Observable` ViewModel은 대개 UI와 함께 동작하므로 클래스에 `@MainActor`를 붙이는 것이 가장 안전합니다.
+
 `@ObservationIgnored`가 유용한 경우:
 - **내부 관리용 프로퍼티**: `UndoManager`, `Task`, 캐시 등
 - **성능 최적화**: 매우 빈번하게 변경되지만 UI에 반영할 필요 없는 값
-- **순환 참조 방지**: delegate나 다른 `@Observable` 객체 참조 시
+- **약한 참조 프로퍼티와 함께**: `@ObservationIgnored weak var delegate: ...`처럼 delegate를 둘 때
+
+> **Warning**: `@ObservationIgnored`는 **Observation 추적에서 제외**할 뿐, ARC 동작(strong/weak)에는 아무런 영향이 없습니다. 이 속성만으로는 순환 참조가 방지되지 않습니다. 순환 참조는 `weak`/`unowned`로만 끊을 수 있으며, 추적이 불필요한 약한 참조라면 `@ObservationIgnored weak var delegate`처럼 둘을 함께 사용합니다.
 
 ---
 
@@ -471,6 +491,7 @@ graph LR
 ```swift
 // 액션 정의
 enum TodoAction {
+    case updateText(String)   // 텍스트 입력도 액션으로 처리
     case add(String)
     case toggle(UUID)
     case delete(UUID)
@@ -500,6 +521,10 @@ class TodoViewModel {
     
     func send(_ action: TodoAction) {
         switch action {
+        case .updateText(let text):
+            // 입력 변경도 ViewModel을 거치게 해 단방향 흐름 유지
+            state.newItemText = text
+            
         case .add(let title):
             guard !title.isEmpty else { return }
             state.items.append(TodoItem(title: title))
@@ -556,11 +581,13 @@ struct TodoView: View {
             }
             .safeAreaInset(edge: .bottom) {
                 HStack {
+                    // private(set) 캡슐화를 지키면서, 입력도
+                    // send(_:)를 통해서만 상태를 바꾼다.
                     TextField(
                         "새 할 일",
                         text: Binding(
                             get: { viewModel.state.newItemText },
-                            set: { viewModel.state.newItemText = $0 }
+                            set: { viewModel.send(.updateText($0)) }
                         )
                     )
                     Button("추가") {
@@ -576,9 +603,13 @@ struct TodoView: View {
 }
 ```
 
+> **Note**: `state`를 `private(set)`으로 막아 두었기 때문에 View는 `state`를 직접 쓸 수 없습니다. 그래서 텍스트 입력처럼 사소해 보이는 변경도 `send(.updateText($0))`로 보냅니다. 모든 상태 변경이 `send(_:)` 한 곳을 거치므로 변경 지점을 추적하기 쉽고, 단방향 흐름이 깨지지 않습니다.
+
 ---
 
 ## 7.4 상태 공유 패턴과 의존성 주입
+
+여러 View가 같은 상태나 서비스를 공유해야 할 때, 의존성 주입(Dependency Injection, DI)을 쓰면 객체의 생성과 사용을 분리해 테스트 가능한 구조를 만들 수 있습니다. SwiftUI에서는 `@Environment`가 그 통로 역할을 합니다.
 
 ### 패턴 1: Environment를 통한 공유
 

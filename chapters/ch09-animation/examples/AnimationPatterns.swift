@@ -72,6 +72,23 @@ struct HeroAnimation: View {
     }
 }
 
+// MARK: - 숫자 카운터 (View + @MainActor Animatable)
+
+struct AnimatableNumber: View, @MainActor Animatable {
+    var value: Double
+
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+
+    var body: some View {
+        Text("\(Int(value))")
+            .font(.system(size: 48, weight: .bold, design: .rounded))
+            .monospacedDigit()
+    }
+}
+
 // MARK: - PhaseAnimator
 
 enum BouncePhase: CaseIterable {
@@ -84,6 +101,14 @@ enum BouncePhase: CaseIterable {
         case .down: 0.9
         }
     }
+
+    var rotation: Double {
+        switch self {
+        case .initial: 0
+        case .up: -10
+        case .down: 5
+        }
+    }
 }
 
 struct BouncingEmoji: View {
@@ -92,8 +117,13 @@ struct BouncingEmoji: View {
             Text("🚀")
                 .font(.system(size: 80))
                 .scaleEffect(phase.scale)
+                .rotationEffect(.degrees(phase.rotation))
         } animation: { phase in
-            .spring(duration: 0.3, bounce: 0.5)
+            switch phase {
+            case .initial: .spring(duration: 0.3)
+            case .up: .spring(duration: 0.2, bounce: 0.5)
+            case .down: .spring(duration: 0.4)
+            }
         }
     }
 }
@@ -107,14 +137,14 @@ struct AnimationValues {
     var opacity = 1.0
 }
 
-struct KeyframeDemo: View {
-    @State private var trigger = false
+struct KeyframeExample: View {
+    @State private var isAnimating = false
 
     var body: some View {
         VStack {
             KeyframeAnimator(
                 initialValue: AnimationValues(),
-                trigger: trigger
+                trigger: isAnimating
             ) { values in
                 Circle()
                     .fill(.blue)
@@ -122,23 +152,51 @@ struct KeyframeDemo: View {
                     .scaleEffect(values.scale)
                     .offset(y: values.verticalOffset)
                     .rotationEffect(values.rotation)
+                    .opacity(values.opacity)
             } keyframes: { _ in
                 KeyframeTrack(\.scale) {
                     SpringKeyframe(1.5, duration: 0.3)
-                    SpringKeyframe(1.0, duration: 0.5)
+                    SpringKeyframe(1.0, duration: 0.2)
+                    SpringKeyframe(1.2, duration: 0.2)
+                    SpringKeyframe(1.0, duration: 0.3)
                 }
+
                 KeyframeTrack(\.verticalOffset) {
                     LinearKeyframe(-100, duration: 0.3)
-                    LinearKeyframe(0, duration: 0.5)
+                    LinearKeyframe(0, duration: 0.4)
+                    LinearKeyframe(-30, duration: 0.2)
+                    LinearKeyframe(0, duration: 0.3)
                 }
+
                 KeyframeTrack(\.rotation) {
                     LinearKeyframe(
-                        .degrees(360), duration: 0.8)
+                        .degrees(360), duration: 1.0)
+                }
+
+                KeyframeTrack(\.opacity) {
+                    LinearKeyframe(0.5, duration: 0.2)
+                    LinearKeyframe(1.0, duration: 0.3)
                 }
             }
 
-            Button("실행") { trigger.toggle() }
+            Button("애니메이션") {
+                isAnimating.toggle()
+            }
         }
+    }
+}
+
+// MARK: - 커스텀 Transition (iOS 17+)
+
+struct BlurTransition: Transition {
+    func body(
+        content: Content,
+        phase: TransitionPhase
+    ) -> some View {
+        content
+            .blur(radius: phase.isIdentity ? 0 : 20)
+            .opacity(phase.isIdentity ? 1 : 0)
+            .scaleEffect(phase.isIdentity ? 1 : 0.8)
     }
 }
 
@@ -146,5 +204,6 @@ struct KeyframeDemo: View {
     VStack(spacing: 40) {
         HeroAnimation()
         BouncingEmoji()
+        KeyframeExample()
     }
 }

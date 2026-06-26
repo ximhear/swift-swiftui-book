@@ -77,7 +77,10 @@ func withRetry<T: Sendable>(
     operation: @Sendable () async throws -> T
 ) async throws -> T {
     var lastError: Error?
-    var currentDelaySeconds = Double(delay.components.seconds)
+    // attoseconds까지 반영해야 1초 미만 delay(예: .milliseconds(500))가 0으로 잘리지 않음
+    var currentDelaySeconds =
+        Double(delay.components.seconds)
+        + Double(delay.components.attoseconds) / 1e18
 
     for attempt in 1...maxAttempts {
         do {

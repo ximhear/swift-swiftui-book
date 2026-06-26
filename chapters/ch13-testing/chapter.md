@@ -6,6 +6,8 @@
 
 ## 13.1 SwiftUI Preview를 활용한 시각적 테스트
 
+🟢 기본
+
 ### Preview는 첫 번째 테스트다
 
 ```swift
@@ -80,11 +82,18 @@ extension User {
 
 ## 13.2 Swift Testing 프레임워크
 
+🟢 기본
+
 ### 기본 사용법
+
+Swift Testing은 `@Test` 함수와 `#expect` 매크로만으로 테스트를 표현합니다. 아래는 Redux식 단방향 패턴(`send(.add)`)으로 상태를 변경하는 ViewModel을 검증하는 예제입니다. `@Suite`의 `init()`은 **테스트마다 새 인스턴스로 호출**되므로, 각 테스트는 깨끗한 초기 상태에서 시작합니다.
 
 ```swift
 import Testing
 
+// @Observable ViewModel은 통상 MainActor에 격리되므로
+// Suite에 @MainActor를 명시해 동기 접근을 허용합니다.
+@MainActor
 @Suite("TodoViewModel 테스트")
 struct TodoViewModelTests {
     let viewModel: TodoViewModel
@@ -136,9 +145,14 @@ struct TodoViewModelTests {
 }
 ```
 
+> **Note**: 동봉한 `examples/SwiftTestingExamples.swift`는 실행 가능한 최소 예제를 위해 `send(.add)` 단방향 패턴 대신 `SimpleTodoVM.add(_:)`처럼 메서드를 직접 호출하는 단순화된 형태를 사용합니다. 두 코드는 같은 동작을 검증하며, 본문은 실무에서 흔한 단방향 패턴을 보여줍니다.
+
 ### 비동기 테스트
 
+`await`로 비동기 메서드를 호출한 뒤 ViewModel의 상태를 검증합니다. `@Observable` ViewModel은 MainActor에 격리되는 것이 일반적이므로, `await` 이후의 동기 프로퍼티 접근이 Swift 6 strict concurrency를 통과하려면 Suite를 `@MainActor`로 격리해야 합니다.
+
 ```swift
+@MainActor
 @Suite("ArticleListViewModel 테스트")
 struct ArticleListViewModelTests {
     @Test("기사 로드 성공")
@@ -179,9 +193,11 @@ struct ArticleListViewModelTests {
 }
 ```
 
+> **Warning**: `@MainActor`로 격리된 `@Observable` ViewModel을 비격리 테스트에서 `await` 호출한 뒤 프로퍼티에 동기 접근하면 Swift 6 strict concurrency에서 컴파일 에러가 납니다(`main actor-isolated property can not be referenced from a nonisolated context`). Suite 또는 개별 `@Test`에 `@MainActor`를 붙여 호출부를 같은 격리 도메인에 두어야 합니다.
+
 ### 매개변수화된 테스트
 
-🟡 중급
+하나의 로직을 여러 입력으로 검증할 때 `arguments`로 데이터를 나열하면 케이스마다 테스트를 복제하지 않아도 됩니다. 각 인자는 독립된 테스트 케이스로 실행되어, 실패한 입력이 무엇인지 정확히 보고됩니다.
 
 ```swift
 @Suite("이메일 유효성 검사")
@@ -210,6 +226,8 @@ struct EmailValidationTests {
 ---
 
 ## 13.3 Snapshot 테스트
+
+🟡 중급
 
 ### swift-snapshot-testing 활용
 
@@ -244,9 +262,13 @@ final class UserCardSnapshotTests: XCTestCase {
 }
 ```
 
+> **Warning**: Snapshot 테스트는 비결정적으로 깨지기 쉽습니다. 레퍼런스 이미지는 **첫 실행 시 자동으로 기록**되므로 그 실행은 항상 통과합니다(레퍼런스가 잘못 잡혀도 모릅니다). 또한 렌더링 결과가 OS 버전·기기 스케일·폰트 메트릭에 따라 미세하게 달라져, CI 머신과 로컬 머신이 다르면 픽셀 차이로 실패할 수 있습니다. 레퍼런스는 **고정된 시뮬레이터/OS 조합**에서 기록하고, 최초 기록 결과를 반드시 사람이 검토한 뒤 커밋하세요.
+
 ---
 
 ## 13.4 접근성 테스트
+
+🟡 중급
 
 ### accessibilityLabel / accessibilityHint 검증
 
@@ -306,6 +328,8 @@ struct AccessibilityLabelTests {
 }
 ```
 
+> **Note**: `ViewInspector`는 본래 XCTest를 겨냥해 만들어진 서드파티 라이브러리로, `inspect().find(...)`·`accessibilityLabel().string()` 등의 시그니처와 `Inspectable` 준수 요구가 **릴리스마다 바뀝니다**. Swift Testing과의 조합은 공식 지원이 아니라 함수 호출에 의존하는 형태이므로, `Package.swift`에서 검증된 버전을 고정하고 업그레이드 시 동작을 재확인하세요.
+
 ### AccessibilityAudit (Xcode 15+)
 
 Xcode 15부터 `XCUIApplication`에 `performAccessibilityAudit` 메서드가 추가되었습니다. 자동화된 접근성 감사를 통해 WCAG 기준에 부합하지 않는 요소를 찾아냅니다.
@@ -360,7 +384,7 @@ final class AccessibilityAuditTests: XCTestCase {
 }
 ```
 
-> **팁**: `performAccessibilityAudit`는 `.dynamicType`, `.contrast`, `.hitRegion`, `.sufficientElementDescription`, `.textClipped` 등 다양한 감사 카테고리를 지원합니다. CI 파이프라인에 포함시키면 접근성 회귀를 자동으로 탐지할 수 있습니다.
+> **Tip**: `performAccessibilityAudit`는 `.dynamicType`, `.contrast`, `.hitRegion`, `.sufficientElementDescription`, `.textClipped` 등 다양한 감사 카테고리를 지원합니다. CI 파이프라인에 포함시키면 접근성 회귀를 자동으로 탐지할 수 있습니다.
 
 ### 테스트 피라미드
 
@@ -404,16 +428,20 @@ struct CartTests {
         #expect(firstItem.price == 89_000)
     }
 
-    @Test("JSON 디코딩 필수 필드 존재 확인")
+    @Test("JSON 디코딩 후 첫 요소 필수 확인")
     func decodeUser() throws {
         let json = """
-        {"id": 1, "name": "홍길동", "email": "hong@test.com"}
+        [{"id": 1, "name": "홍길동", "email": "hong@test.com"}]
         """.data(using: .utf8)!
 
-        let user = try #require(
-            try? JSONDecoder().decode(User.self, from: json)
-        )
-        #expect(user.name == "홍길동")
+        // 디코딩 에러는 try로 그대로 전파시킵니다.
+        // try?로 삼키면 실패 원인(어떤 키가 없었는지 등)을 잃습니다.
+        let users = try JSONDecoder().decode([User].self, from: json)
+
+        // 배열이 비어 있으면 #require가 즉시 실패시키고
+        // 이후 코드는 실행되지 않습니다.
+        let first = try #require(users.first)
+        #expect(first.name == "홍길동")
     }
 }
 ```
@@ -437,11 +465,14 @@ struct PaymentTests {
         }
     }
 
-    @Test("특정 조건에서만 알려진 이슈 발생")
-    func conditionalKnownIssue() {
+    @Test("간헐적으로 실패하는 알려진 이슈")
+    func intermittentKnownIssue() {
         let locale = Locale.current
+        // isIntermittent: true는 "매번이 아니라 때때로 실패함"을
+        // 알리는 플래그입니다. 특정 조건에서만 감싸고 싶다면
+        // 호출부에서 직접 if로 분기해야 합니다.
         withKnownIssue(
-            "한국 로캘에서 통화 형식 오류",
+            "통화 형식이 간헐적으로 어긋나는 알려진 이슈",
             isIntermittent: true
         ) {
             let formatted = CurrencyFormatter.format(
@@ -497,15 +528,21 @@ struct UserServiceTests {
 }
 ```
 
-터미널에서 태그를 기준으로 필터링하여 실행할 수 있습니다.
+터미널에서 태그로 필터링할 때는 도구별 차이에 주의해야 합니다. SwiftPM의 `swift test --filter`/`--skip`는 **테스트 이름에 대한 정규식만** 받으며, 태그 기반 필터링을 지원하지 않습니다(2026년 기준 기능 요청 단계). 태그 필터는 Xcode 16.3+의 `xcodebuild` 플래그나 테스트 플랜, 또는 Xcode 테스트 네비게이터에서 수행합니다.
 
 ```bash
-# network 태그만 실행
-swift test --filter tag:network
+# SwiftPM: 이름 정규식만 가능 (태그 필터 아님)
+swift test --filter UserServiceTests          # 이름이 매칭되는 테스트만
+swift test --skip displayName                 # 이름이 매칭되는 테스트 제외
 
-# slow 태그 제외
-swift test --skip tag:slow
+# Xcode 16.3+: 태그 기반 실행/제외 (xcodebuild)
+xcodebuild test -scheme MyScheme \
+    -only-testing-tags network
+xcodebuild test -scheme MyScheme \
+    -skip-testing-tags slow
 ```
+
+> **Warning**: `swift test --filter tag:network`처럼 `tag:` 접두사를 붙이는 구문은 **존재하지 않습니다**. SwiftPM에서 `tag:network`는 그저 테스트 이름 정규식으로 해석되어 의도와 다르게 동작합니다. 태그 필터링이 필요하면 `xcodebuild`의 `-only-testing-tags`/`-skip-testing-tags`(Xcode 16.3+) 또는 테스트 플랜을 사용하세요.
 
 ### `confirmation`을 이용한 이벤트 발생 검증
 
@@ -622,6 +659,8 @@ final class TodoAppUITests: XCTestCase {
 }
 ```
 
+> **Warning**: UI 테스트는 비동기 렌더링·애니메이션 때문에 타이밍에 취약합니다(flaky test의 주범). 요소가 즉시 나타난다고 가정하고 `cell.exists`를 바로 검사하면 간헐적으로 실패하므로, **항상 `waitForExistence(timeout:)`로 등장을 기다린 뒤** 단언하세요. 반대로 사라짐을 확인할 때는 짧은 대기 후 `exists`를 검사하거나 `expectation(for:)`를 활용합니다. 또한 launch environment의 `MOCK_DELAY: "0"`처럼 **네트워크 지연을 제거**해 타이밍 변수를 줄이는 것이 안정성에 크게 기여합니다.
+
 ### 접근성 식별자를 활용한 요소 찾기
 
 UI 요소를 안정적으로 찾으려면 텍스트 기반 검색 대신 접근성 식별자(`accessibilityIdentifier`)를 사용합니다. 다국어 지원 시에도 테스트가 깨지지 않습니다.
@@ -692,9 +731,9 @@ final class TodoAccessibilityIDTests: XCTestCase {
 }
 ```
 
-### 네트워크 목 없이 UI 테스트하기 — Launch Arguments 활용
+### 네트워크 Mock 없이 UI 테스트하기 — Launch Arguments 활용
 
-UI 테스트에서는 네트워크 목(mock) 라이브러리를 직접 주입할 수 없습니다. 대신 **launch arguments**로 앱에 테스트 모드를 알려주고, 앱 내부에서 목 데이터를 반환하도록 분기합니다.
+UI 테스트에서는 네트워크 Mock 라이브러리를 테스트 프로세스에서 앱 프로세스로 직접 주입할 수 없습니다. 대신 **launch arguments**로 앱에 테스트 모드를 알려주고, 앱 내부에서 Mock 데이터를 반환하도록 분기합니다.
 
 ```swift
 // ── UI 테스트에서 launch arguments 설정 ──
@@ -1026,14 +1065,17 @@ final class SpyArticleRepository: ArticleRepository,
 }
 ```
 
+> **Warning**: 위 Mock/Spy는 `@unchecked Sendable`로 선언되어 가변 상태(`fetchAllCallCount`, `callLog` 등)를 **동기화 없이** `async` 메서드에서 변경합니다. `@unchecked`는 컴파일러의 동시성 검사를 끈 것일 뿐이므로, 같은 인스턴스를 여러 태스크에서 동시에 호출하면 실제로 data race가 발생할 수 있습니다. 여기서는 **각 테스트가 단일 인스턴스를 직렬로 호출**하고, 호출 횟수를 동기적으로 검증해야 해서 actor 대신 이 형태를 택했습니다. 병렬 호출이 필요한 시나리오라면 Mock을 `actor`로 만들거나 락으로 보호하세요.
+
 ### Swift Testing + Async Mock 조합 예제
 
-위에서 만든 Mock을 Swift Testing과 함께 사용하는 실전 예제입니다.
+위에서 만든 Mock을 Swift Testing과 함께 사용하는 실전 예제입니다. `@Observable` ViewModel이 MainActor 격리이므로 Suite에도 `@MainActor`를 명시합니다.
 
 ```swift
 import Testing
 @testable import MyApp
 
+@MainActor
 @Suite("ArticleListViewModel 테스트 — Mock 활용")
 struct ArticleViewModelMockTests {
     let mock: MockArticleRepository

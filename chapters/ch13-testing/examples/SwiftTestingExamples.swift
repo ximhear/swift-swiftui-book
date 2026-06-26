@@ -12,8 +12,13 @@ struct TodoItem: Identifiable {
     var isCompleted = false
 }
 
+// @Observable ViewModel은 SwiftUI에서 통상 MainActor에 격리됩니다.
+// 본문 §13.2는 Redux식 send(.add) 단방향 패턴을 보여주지만,
+// 여기서는 실행 가능한 최소 예제를 위해 메서드를 직접 호출하는
+// 단순화된 형태(SimpleTodoVM.add 등)를 사용합니다.
+@MainActor
 @Observable
-class SimpleTodoVM {
+final class SimpleTodoVM {
     var items: [TodoItem] = []
 
     func add(_ title: String) {
@@ -34,6 +39,9 @@ class SimpleTodoVM {
 
 // MARK: - 테스트
 
+// VM이 MainActor 격리이므로 Suite에도 @MainActor를 명시합니다.
+// (그래야 동기 테스트에서 vm 프로퍼티에 안전하게 접근할 수 있습니다.)
+@MainActor
 @Suite("TodoVM 테스트")
 struct TodoVMTests {
     let vm = SimpleTodoVM()
@@ -74,8 +82,26 @@ struct TodoVMTests {
 
 struct EmailValidator {
     static func isValid(_ email: String) -> Bool {
-        email.contains("@") && email.contains(".")
-            && !email.isEmpty
+        // "@"를 기준으로 local/domain 부분을 나눠 각각을 검사합니다.
+        // 빈 부분을 살리기 위해 omittingEmptySubsequences: false 사용.
+        let parts = email.split(
+            separator: "@",
+            omittingEmptySubsequences: false
+        )
+        guard parts.count == 2 else { return false }
+
+        let local = parts[0]
+        let domain = parts[1]
+        guard !local.isEmpty, !domain.isEmpty else { return false }
+
+        // 도메인은 점(.)으로 나뉜 라벨이 2개 이상이고,
+        // 각 라벨이 비어 있지 않아야 합니다. ("@.com" 같은 값 거름)
+        let labels = domain.split(
+            separator: ".",
+            omittingEmptySubsequences: false
+        )
+        guard labels.count >= 2 else { return false }
+        return labels.allSatisfy { !$0.isEmpty }
     }
 }
 
@@ -83,16 +109,19 @@ struct EmailValidator {
 struct EmailTests {
     @Test("유효한 이메일", arguments: [
         "user@example.com",
-        "a@b.co"
+        "first.last@domain.co.kr",
+        "user+tag@gmail.com"
     ])
     func valid(_ email: String) {
         #expect(EmailValidator.isValid(email))
     }
 
     @Test("유효하지 않은 이메일", arguments: [
-        "no-at-sign",
-        "",
-        "@.com"
+        "not-an-email",
+        "@missing-local.com",
+        "missing-at-sign.com",
+        "@.com",
+        ""
     ])
     func invalid(_ email: String) {
         #expect(!EmailValidator.isValid(email))

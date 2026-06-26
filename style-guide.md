@@ -23,12 +23,18 @@
 | Closure | 클로저 |
 | Property Wrapper | 프로퍼티 래퍼 |
 | Concurrency | 동시성 |
-| Actor | 액터 |
+| Actor | Actor (영문 유지) |
 | Observable | 옵저버블 |
 | Environment | 환경(Environment) |
 | Modifier | 수정자(Modifier) |
 | State | 상태(State) |
 | Binding | 바인딩 |
+| Existential Type | 존재적 타입(Existential Type) |
+| Opaque Type | 불투명 타입(Opaque Type) |
+| Associated Type | 연관 타입(Associated Type) |
+
+> `Actor`는 ch03·ch14를 비롯해 원고 전반에서 영문으로 통일되어 있어 영문을 유지한다.
+> `Existential`/`Opaque`/`Associated` 타입은 첫 등장 시 위 형태로 한글 병기하고, 이후에는 자연스러운 쪽을 쓴다.
 
 ## 예제 코드 작성 규칙
 
@@ -49,6 +55,8 @@
 - 🟢 기본: 개념을 이해하기 위한 최소 예제
 - 🟡 중급: 실무에서 자주 만나는 패턴
 - 🔴 고급: 깊은 이해가 필요한 심화 예제
+
+난이도 마커는 **하위 섹션(`###`) 제목 바로 아래 독립 행**에 둔다. 도입 문단 뒤나 `##` 절 레벨에 흩어 놓지 않는다 — 장마다 위치가 달라지면 일관성이 깨진다.
 
 ## 그림/다이어그램
 

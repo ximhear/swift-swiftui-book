@@ -78,7 +78,8 @@ func demonstrateTypeSafeID() {
     let orderId = Identifier<Order>(rawValue: "order_456")
 
     _ = fetchUser(id: userId)   // ✅ 정상
-    // fetchUser(id: orderId)   // ❌ 컴파일 에러
+    // fetchUser(id: orderId)   // ❌ 컴파일 에러: Order ID를 User 파라미터에 넘길 수 없음
+    _ = orderId                 // 위 ❌ 데모용 변수 — 미사용 경고 방지
 }
 
 // MARK: - 패턴 3: Result Builder

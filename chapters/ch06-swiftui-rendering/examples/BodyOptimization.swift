@@ -31,12 +31,23 @@ struct SmallCounterView: View {
     }
 }
 
-struct ListItem: Identifiable {
+struct ListItem: Identifiable, Equatable {
     let id = UUID()
     var name: String
 }
 
-struct OptimizedContentView: View {
+struct ExpensiveListView: View {
+    let items: [ListItem]
+
+    var body: some View {
+        let _ = print("ExpensiveListView body")
+        List(items) { item in
+            Text(item.name)
+        }
+    }
+}
+
+struct ContentView: View {
     @State private var items = [
         ListItem(name: "A"), ListItem(name: "B")
     ]
@@ -44,11 +55,10 @@ struct OptimizedContentView: View {
     var body: some View {
         let _ = print("ContentView body")
         VStack {
+            // counter가 바뀌어도 ContentView.body는 재실행되지 않음
+            // → ExpensiveListView 구조체의 재생성·비교조차 일어나지 않음
             SmallCounterView()
-            // counter가 바뀌어도 이 List는 재평가 안 됨
-            List(items) { item in
-                Text(item.name)
-            }
+            ExpensiveListView(items: items)
         }
     }
 }
@@ -67,8 +77,11 @@ struct ExpensiveRow: View, Equatable {
         }
     }
 
-    static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.title == rhs.title
+    // View는 @MainActor 격리이므로, nonisolated로 선언해야
+    // Equatable의 nonisolated == 요구를 충족한다 (Swift 6).
+    // 표시되는 모든 필드를 비교해 내용 변경을 놓치지 않는다.
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.title == rhs.title && lhs.subtitle == rhs.subtitle
     }
 }
 

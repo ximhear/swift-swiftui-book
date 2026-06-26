@@ -32,9 +32,9 @@ struct CounterView: View {
 
 SwiftUI는 다음 조건에서 `body`를 다시 호출합니다:
 
-1. **View가 의존하는 상태가 변경될 때** — `@State`, `@Binding`, `@Observable` 등
+1. **View가 의존하는 상태가 변경될 때** — `@State`, `@Binding`, 그리고 `@Observable` 객체에서 **body가 실제로 읽은** 프로퍼티 등 (`@Observable`은 프로퍼티 래퍼가 아니라 클래스에 붙이는 매크로입니다. 자세한 추적 동작은 6.4에서 다룹니다)
 2. **부모 View가 body를 다시 평가할 때** — 부모로부터 받은 프로퍼티가 변경될 수 있음
-3. **Environment 값이 변경될 때** — `@Environment`로 읽은 값이 바뀌면
+3. **환경(Environment) 값이 변경될 때** — `@Environment`로 읽은 값이 바뀌면
 
 ```swift
 struct ParentView: View {
@@ -157,7 +157,7 @@ struct ProfileView: View {
 
 ### Explicit Identity — id()로 직접 지정
 
-`id()` 수정자나 `ForEach`의 id 매개변수로 명시적 정체성을 부여합니다:
+`id()` 수정자(Modifier)나 `ForEach`의 id 매개변수로 명시적 정체성을 부여합니다:
 
 ```swift
 struct AnimatedCounter: View {
@@ -218,6 +218,8 @@ struct ItemListView: View {
 
 인덱스를 `id`로 사용하면, 아이템이 삭제되거나 순서가 바뀔 때 SwiftUI가 **잘못된 View에 상태를 연결**합니다. 항상 고유하고 안정적인 식별자를 사용하세요.
 
+> **Warning**: `ForEach`에 컬렉션 인덱스를 `id`로 넘기지 마세요(`ForEach(items.indices, id: \.self)`). 아이템이 삽입·삭제·재정렬되면 인덱스와 실제 데이터의 대응이 어긋나, SwiftUI가 잘못된 View에 `@State`를 연결하는 가장 흔한 버그가 됩니다. `Identifiable`의 안정적인 `id`를 사용하세요.
+
 ---
 
 ## 6.3 View의 생명주기와 상태 보존
@@ -239,8 +241,8 @@ struct LifecycleView: View {
     @State private var data: [String] = []
     
     init() {
-        // ⚠️ init은 body가 평가될 때마다 호출될 수 있음
-        // 무거운 작업을 여기서 하지 마세요!
+        // ⚠️ 부모가 이 View를 다시 생성할 때마다(부모 body 재평가 시)
+        // init이 호출될 수 있음 — 무거운 작업을 여기서 하지 마세요!
         print("init 호출")
     }
     
@@ -270,6 +272,8 @@ struct LifecycleView: View {
 }
 ```
 
+> **Warning**: View의 `init`에서 네트워크 요청, 파일 I/O, 무거운 계산 같은 부수효과를 일으키지 마세요. View 구조체는 부모 body가 재평가될 때마다 새로 생성되므로, `init`도 예상보다 훨씬 자주 호출됩니다. 데이터 로딩은 `.task`나 `.onAppear`에서 수행하는 것이 원칙입니다.
+
 ### 상태 보존과 소멸 규칙
 
 상태가 보존되는 조건:
@@ -282,8 +286,9 @@ struct TabExample: View {
     
     var body: some View {
         TabView(selection: $selectedTab) {
-            // 각 탭의 상태는 탭을 전환해도 보존됨
-            // (TabView가 내부적으로 모든 탭을 유지)
+            // 각 탭의 콘텐츠는 처음 표시될 때 생성되고,
+            // 한 번 활성화된 뒤에는 탭을 전환해도 상태가 보존됨
+            // (모든 탭을 미리 만들어 두는 것이 아니라 지연 생성)
             CounterView()
                 .tabItem { Text("카운터") }
                 .tag(0)
@@ -370,24 +375,28 @@ struct ProblematicView: View {
 
 **전략 1: View를 작게 분리하기**
 
+먼저 흔한 오해부터 짚고 넘어갑시다. "큰 View 안에서 `counter`가 바뀌면 같은 body 안의 `ExpensiveListView`도 매번 다시 그려진다"고 생각하기 쉽지만, 그렇지 않습니다. `items`가 변하지 않았다면 `ExpensiveListView`의 `body`는 6.1에서 본 최적화 덕분에 **건너뜁니다**. 그렇다면 분리의 실익은 무엇일까요? `counter`가 바뀔 때 **부모 body 전체가 재실행되면서**, 변경과 무관한 자식 View 구조체까지 매번 새로 생성하고 비교하는 비용이 든다는 점입니다. View를 분리하면 이 재실행 범위 자체를 좁힐 수 있습니다.
+
 ```swift
-// ❌ 큰 View: counter가 바뀌면 전체 body 재평가
+// ❌ 큰 View: counter가 바뀌면 BigView.body 전체가 재실행됨
 struct BigView: View {
     @State private var counter = 0
-    @State private var items: [Item] = []
+    @State private var items: [ListItem] = []
     
     var body: some View {
         VStack {
             Text("카운터: \(counter)")
             Button("+1") { counter += 1 }
             
-            // counter가 바뀔 때마다 이 List도 재평가됨
+            // ExpensiveListView.body 자체는 items 불변이면 건너뛰지만,
+            // counter 변경 시 BigView.body가 매번 재실행되면서
+            // ExpensiveListView 구조체를 새로 생성·비교하는 비용은 발생
             ExpensiveListView(items: items)
         }
     }
 }
 
-// ✅ View 분리: counter 변경이 List에 영향 없음
+// ✅ View 분리: counter는 SmallCounterView 안에 격리
 struct SmallCounterView: View {
     @State private var counter = 0
     
@@ -400,10 +409,12 @@ struct SmallCounterView: View {
 }
 
 struct ContentView: View {
-    @State private var items: [Item] = []
+    @State private var items: [ListItem] = []
     
     var body: some View {
         VStack {
+            // counter가 바뀌어도 ContentView.body는 재실행되지 않음
+            // → ExpensiveListView 구조체의 재생성·비교조차 일어나지 않음
             SmallCounterView()
             ExpensiveListView(items: items)
         }
@@ -411,9 +422,18 @@ struct ContentView: View {
 }
 ```
 
+`counter`를 `SmallCounterView` 안으로 옮기면, `counter` 변경 시 재실행되는 것은 `SmallCounterView.body`뿐입니다. `ContentView.body`는 건드리지 않으므로 `ExpensiveListView` 구조체의 재생성·비교 자체가 사라집니다. 즉 분리의 핵심 이득은 "List body 재평가를 막는 것"이 아니라 **body 재실행과 상태 관찰의 범위를 좁히는 것**입니다.
+
 **전략 2: Equatable 활용**
 
+View가 `Equatable`을 채택하면, SwiftUI는 직접 정의한 `==`으로 이전 값과 새 값을 비교해 "같다"고 판단될 때 `body` 재평가를 건너뛸 수 있습니다.
+
 ```swift
+struct Item: Identifiable, Equatable {
+    let id: UUID
+    var name: String
+}
+
 struct ExpensiveView: View, Equatable {
     let title: String
     let items: [Item]
@@ -428,13 +448,34 @@ struct ExpensiveView: View, Equatable {
         }
     }
     
-    // 커스텀 비교: title만 비교하여
-    // items가 같은 참조면 body 재호출 방지
-    static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.title == rhs.title
-            && lhs.items.count == rhs.items.count
+    // 표시에 쓰이는 모든 필드를 비교한다.
+    // title 또는 items의 내용·순서가 하나라도 바뀌면 false →
+    // body가 다시 호출되어 화면이 갱신된다.
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.title == rhs.title && lhs.items == rhs.items
     }
 }
+```
+
+여기서 두 가지를 반드시 짚어야 합니다.
+
+**첫째, `==`은 `nonisolated`로 선언해야 합니다.** `View` 프로토콜은 `@MainActor`로 격리되어 있어, `View`를 채택한 타입의 멤버도 기본적으로 메인 액터에 격리됩니다. 반면 `Equatable.==`는 어느 스레드에서든 호출될 수 있는 `nonisolated` 요구사항입니다. 따라서 메인 액터에 격리된 `==`으로는 `Equatable` 요구를 충족할 수 없고, Swift 6 모드에서는 다음과 같은 컴파일 에러가 납니다.
+
+```text
+error: conformance of 'ExpensiveView' to protocol 'Equatable'
+crosses into main actor-isolated code and can cause data races
+```
+
+`nonisolated static func ==`으로 선언하면 이 격리 경계 문제가 해소되어 정상적으로 컴파일됩니다.
+
+**둘째, 비교 로직은 "표시에 영향을 주는 모든 값"을 담아야 합니다.** `Equatable.==`는 "두 값이 의미적으로 같은가"를 약속하는 계약입니다. 만약 `lhs.items.count == rhs.items.count`처럼 **개수만** 비교하면, 개수는 같지만 내용이나 순서가 바뀐 경우에도 `true`를 반환합니다. 그러면 SwiftUI는 변경을 감지하지 못해 `body`를 건너뛰고, 화면이 옛 상태로 멈추는 stale UI 버그가 발생합니다. 이것은 최적화가 아니라 정확성 결함입니다. 위 예제처럼 내용까지(`lhs.items == rhs.items`) 비교해야 안전합니다.
+
+> **Warning**: `Equatable`을 채택했다고 해서 SwiftUI가 항상 그 `==`을 비교에 사용하는 것은 아닙니다. View의 프로퍼티 구성에 따라 무시될 수 있는 휴리스틱이므로, 직접 정의한 `==`을 확실히 적용하려면 `.equatable()` 수정자(내부적으로 `EquatableView`로 래핑)를 명시해야 합니다.
+
+```swift
+// 직접 정의한 ==을 확실히 사용하도록 강제
+ExpensiveView(title: title, items: items)
+    .equatable()
 ```
 
 **전략 3: @Observable의 세밀한 추적 활용**

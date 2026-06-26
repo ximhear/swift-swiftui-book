@@ -97,13 +97,24 @@ struct ItemListView: View {
 struct LifecycleView: View {
     @State private var data: [String] = []
 
+    init() {
+        // ⚠️ 부모가 이 View를 다시 생성할 때마다(부모 body 재평가 시)
+        // init이 호출될 수 있음 — 무거운 작업을 여기서 하지 마세요!
+        print("init 호출")
+    }
+
     var body: some View {
         List(data, id: \.self) { Text($0) }
             .onAppear { print("onAppear") }
             .onDisappear { print("onDisappear") }
             .task {
-                try? await Task.sleep(for: .seconds(1))
-                data = ["항목 1", "항목 2", "항목 3"]
+                // onAppear의 async 버전, View가 사라지면 자동 취소
+                data = await loadData()
             }
+    }
+
+    func loadData() async -> [String] {
+        try? await Task.sleep(for: .seconds(1))
+        return ["항목 1", "항목 2", "항목 3"]
     }
 }

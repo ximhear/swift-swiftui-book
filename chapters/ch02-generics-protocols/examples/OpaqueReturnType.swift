@@ -89,3 +89,33 @@ func demonstrateOpaqueAPI() async throws {
         print(user.name)
     }
 }
+
+// MARK: - 함수마다 독립적인 Opaque Return Type
+
+// 주의: SwiftUI의 Animation은 프로토콜이 아니라 구조체다.
+// some Animation은 컴파일되지 않으므로, 여기서는 Effect 프로토콜을 정의한다.
+protocol Effect {
+    func apply()
+}
+
+struct FadeEffect: Effect {
+    func apply() { /* 페이드 처리 */ }
+}
+
+struct SlideEffect: Effect {
+    func apply() { /* 슬라이드 처리 */ }
+}
+
+struct EffectLibrary {
+    // 각각 다른 구체 타입을 반환하지만 외부에서는 some Effect로만 보임
+    func fadeIn() -> some Effect {
+        FadeEffect()
+    }
+
+    func slideUp() -> some Effect {
+        SlideEffect()
+    }
+
+    // 두 반환 타입은 서로 독립적인 구체 타입으로 취급됨
+    // type(of: fadeIn()) != type(of: slideUp())
+}

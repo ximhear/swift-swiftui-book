@@ -8,15 +8,19 @@
 
 ### Layout 프로토콜의 두 가지 메서드
 
-Layout 프로토콜은 핵심적으로 두 메서드만 구현하면 됩니다:
+Layout 프로토콜은 핵심적으로 두 메서드만 구현하면 됩니다. 아래는 프로토콜의 형태를 보여주기 위한 **개념 설명용 의사(pseudo) 선언**으로, 그대로 컴파일되지는 않습니다:
 
 ```swift
 protocol Layout: Animatable {
+    // 캐시 타입. 기본값이 Void이므로 별도로 지정하지 않으면
+    // cache 파라미터는 inout () 이 된다.
+    associatedtype Cache = Void
+
     // 1단계: 전체 컨테이너의 크기 결정
     func sizeThatFits(
         proposal: ProposedViewSize,
         subviews: Subviews,
-        cache: inout CacheData
+        cache: inout Cache
     ) -> CGSize
     
     // 2단계: 각 자식 View의 위치 배치
@@ -24,16 +28,20 @@ protocol Layout: Animatable {
         in bounds: CGRect,
         proposal: ProposedViewSize,
         subviews: Subviews,
-        cache: inout CacheData
+        cache: inout Cache
     )
 }
 ```
+
+`Cache`는 연관 타입(associated type)이고 기본값이 `Void`입니다. 그래서 캐시를 쓰지 않는 아래 FlowLayout 예제에서는 `cache: inout ()` 형태가 되고, 캐시가 필요한 8.4의 CachedFlowLayout처럼 직접 `Cache`를 정의하면 `cache: inout CacheData` 형태가 됩니다.
 
 ### 예제: FlowLayout (태그 나열)
 
 🟡 중급
 
 가로 공간이 부족하면 다음 줄로 넘어가는 플로우 레이아웃:
+
+**파일: FlowLayout.swift**
 
 ```swift
 struct FlowLayout: Layout {
@@ -152,10 +160,14 @@ struct RadialLayout: Layout {
         subviews: Subviews,
         cache: inout ()
     ) -> CGSize {
-        let size = min(
+        // nil(미지정)은 ?? 로 거를 수 있지만 .infinity 는 걸러지지
+        // 않는다. ScrollView 처럼 한 축을 .infinity 로 제안하는
+        // 컨테이너에서 무한 크기를 주장하지 않도록 유한성을 클램프한다.
+        let proposed = min(
             proposal.width ?? 200,
             proposal.height ?? 200
         )
+        let size = proposed.isFinite ? proposed : 200
         return CGSize(width: size, height: size)
     }
     
@@ -186,6 +198,8 @@ struct RadialLayout: Layout {
     }
 }
 ```
+
+> **Warning**: `ProposedViewSize`의 `width`/`height`는 `nil`(미지정)뿐 아니라 `.infinity` 값을 가질 수 있습니다. `proposal.width ?? 200`처럼 nil-coalescing만 쓰면 `.infinity`를 걸러내지 못해, `ScrollView` 같은 무한 제안 컨테이너 안에서 레이아웃이 무한 크기를 주장하고 화면이 깨집니다. 위 코드처럼 `isFinite`로 유한성을 검사해 안전한 기본값으로 클램프하세요.
 
 ---
 
@@ -219,6 +233,8 @@ struct GoodExample: View {
     }
 }
 ```
+
+> **Warning**: `GeometryReader`는 가용 공간을 모두 차지하고 자식을 좌상단(topLeading)에 배치합니다. 그래서 콘텐츠 크기에 맞춰 줄어들지 않고 부모의 레이아웃을 무너뜨리기 쉽습니다. 크기 정보가 정말 필요할 때만 쓰고, 아래 `ProgressBar`처럼 `frame(height:)` 등으로 점유 영역을 명시적으로 제한하세요.
 
 ### GeometryReader가 적합한 경우
 
@@ -261,14 +277,18 @@ Text("Hello")
 
 ### Canvas — 고성능 2D 드로잉
 
-`Canvas`는 SwiftUI에서 직접 2D 그래픽을 그리는 가장 효율적인 방법입니다:
+`Canvas`는 다수의 드로잉 요소를 뷰 트리 생성 없이 즉시 모드(immediate mode)로 그릴 때 효율적입니다. 단, 즉시 모드이므로 요소별 뷰 단위 애니메이션·제스처·접근성이 없고 상태가 바뀌면 전체를 다시 그립니다. 요소가 적거나 요소별 인터랙션이 필요하면 일반 `Shape`/뷰가 더 적합합니다:
+
+**파일: CanvasDrawing.swift**
 
 ```swift
-struct ChartView: View {
+struct LineChartView: View {
     let dataPoints: [Double]
     
     var body: some View {
         Canvas { context, size in
+            // count가 1 이하면 stepX 계산이 0 나눗셈(inf/NaN)이 되므로 가드
+            guard dataPoints.count > 1 else { return }
             let stepX = size.width /
                 CGFloat(dataPoints.count - 1)
             let maxValue = dataPoints.max() ?? 1
@@ -318,7 +338,11 @@ struct ChartView: View {
 }
 ```
 
+> **Note**: `Canvas`로 그린 내용은 개별 뷰가 아니라 하나의 그림이라, 데이터 포인트 하나하나에 접근성 레이블이나 탭 제스처를 붙일 수 없습니다. 차트의 각 점에 VoiceOver 설명이나 인터랙션이 필요하다면 `Canvas` 대신 점마다 별도 뷰를 배치하거나, `accessibilityChildren`으로 접근성 트리를 따로 구성해야 합니다.
+
 ### 커스텀 Shape
+
+**파일: CanvasDrawing.swift**
 
 ```swift
 struct Polygon: Shape {
@@ -431,6 +455,8 @@ struct CachedFlowLayout: Layout {
 }
 ```
 
+> **Warning**: `makeCache`에서 `sizeThatFits(.unspecified)`로 구한 고유 크기는 자식 크기가 제안 폭에 의존하지 않을 때만 정확합니다. 폭에 따라 높이가 달라지는 멀티라인 `Text`처럼 가변 크기 자식은 unspecified(이상적) 크기와 실제 제약된 크기가 달라 줄바꿈 계산이 틀어질 수 있습니다. 이런 경우 제안 폭별로 크기를 다시 계산하거나 캐싱 대상에서 제외하세요.
+
 ### drawingGroup() — GPU 가속
 
 ```swift
@@ -449,6 +475,8 @@ struct HeavyGraphicsView: View {
 }
 ```
 
+> **Tip**: `drawingGroup()`은 만능이 아닙니다. 뷰를 단일 비트맵으로 평탄화하므로 콘텐츠가 단순하거나 적으면 오히려 느려질 수 있고, 일부 블렌딩·접근성·개별 애니메이션 동작이 달라질 수 있습니다. 위 예제처럼 요소가 많은 복잡한 정적 그래픽에 한해, 프로파일링으로 실제 이득을 확인한 뒤 적용하세요.
+
 ---
 
 ## 정리
@@ -463,4 +491,4 @@ struct HeavyGraphicsView: View {
 
 - **성능**: Layout 캐시로 중복 계산을 피하고, `drawingGroup()`으로 복잡한 그래픽의 렌더링을 GPU에 위임합니다.
 
-다음 장에서는 **애니메이션과 트랜지션**을 심화 학습합니다.
+다음 장에서는 **애니메이션과 트랜지션**을 다루며, 암시적·명시적 애니메이션과 커스텀 트랜지션을 통해 이 장에서 만든 레이아웃과 그래픽에 자연스러운 움직임을 더하는 방법을 익힙니다.
